@@ -1,7 +1,7 @@
 """Render preview images from the studio cameras.
 
 blender -b bike/wasteland_scrambler.blend --python scripts/render_previews.py -- \
-        --cams Cam_Hero,Cam_SideRight --samples 128 --res 1400x1260 --outdir renders
+        --cams Cam_Hero,Cam_SideRight --samples 128 --res 1400x1260 --outdir renders [--set speedo_kmh=62]
 """
 import bpy
 import os
@@ -20,6 +20,10 @@ w, h = (int(v) for v in arg("--res", "1400x1260").split("x"))
 outdir = os.path.abspath(arg("--outdir", "renders"))
 os.makedirs(outdir, exist_ok=True)
 sc = bpy.context.scene
+root = bpy.data.objects.get("Bike_Root")
+for kv in filter(None, arg("--set", "").split(",")):          # e.g. --set speedo_kmh=62,tacho_rpm=3400
+    k, v = kv.split("=")
+    root[k] = float(v)
 sc.cycles.samples = samples
 sc.render.resolution_x, sc.render.resolution_y = w, h
 try:

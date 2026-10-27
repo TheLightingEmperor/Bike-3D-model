@@ -1722,7 +1722,7 @@ def build_cockpit(M, F, steer):
         S.append(revolve_obj("Gauge_%s_Bezel" % gname, [(0.0, rf), (0.0, rb), (0.004, rb), (0.0078, rf + 0.0016), (0.0078, rf + 0.0006), (0.003, rf)],
                              col, M['chrome'], G, segs=64, axis='Z', closed=True))
         gm = mat_gauge("M_Gauge_" + gname, load_image(img_n), load_image(emit_n) if emit_n else None)
-        S.append(obj_from_bm("Gauge_%s_Dial" % gname, disc_uv_bm(rf, 64, 0.0016), col, gm, G, smooth=False))
+        S.append(obj_from_bm("Gauge_%s_Dial" % gname, disc_uv_bm(rf, 64, 0.0027), col, gm, G, smooth=False))
         S.append(revolve_obj("Gauge_%s_Glass" % gname, [(0.0071, 0.0), (0.0074, rf * 0.5), (0.0071, rf + 0.0012)], col, M['glass'], G, segs=48, axis='Z'))
         pivot = make_empty("Gauge_%s_NeedlePivot" % gname, G @ Matrix.Translation((0, 0, 0.0035)), col, 'ARROWS', 0.01)
         parent_later(pivot, steer)
@@ -3083,6 +3083,11 @@ def build_studio():
     cam("Cam_Front", (0.0, -4.2, 0.75), (0, 0, 0.62), 60)
     cam("Cam_Top", (0.0, 0.0, 4.5), (0, 0, 0.0), 50)
     cam("Cam_EngineDetail", (-1.05, -0.7, 0.75), (-0.05, -0.05, 0.52), 45)
+    cam("Cam_Cockpit", (0.0, -0.08, 1.50), (0.0, -0.46, 1.20), 30)
+    cam("Cam_Gauges", (0.03, -0.27, 1.43), (0.0, -0.462, 1.245), 40)
+    cam("Cam_HeadStock", (0.62, -0.95, 1.18), (0.03, -0.50, 0.95), 40)
+    cam("Cam_LeftDetail", (1.15, 0.05, 0.78), (0.05, 0.22, 0.58), 40)
+    cam("Cam_RearDetail", (-0.95, 1.05, 0.62), (-0.12, 0.55, 0.45), 40)
     bpy.context.scene.camera = hero
 
 

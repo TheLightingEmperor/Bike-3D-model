@@ -13,7 +13,7 @@ What it does (the source .blend is never modified):
      (captures all procedural bump detail) with Cycles.
   4. Rebuilds glTF-friendly Principled materials from the baked maps. Uniform materials
      (glass, lenses, wires) stay as plain factors.
-  5. Exports GLB (with embedded textures), FBX (embedded textures), USD, and saves
+  5. Exports GLB (with embedded textures), FBX (embedded textures), USD + USDZ, and saves
      a "_game.blend" plus the PNG maps.
 """
 import bpy
@@ -38,9 +38,9 @@ TEX = os.path.join(OUT, "textures")
 os.makedirs(TEX, exist_ok=True)
 
 SETS = {
-    "Paint": ("M_Paint_", "M_Emblem"),
+    "Paint": ("M_Paint_",),
     "Metal": ("M_Steel", "M_Pipe", "M_Chrome", "M_Alu", "M_DarkMetal", "M_Hardware", "M_BraidedLine", "M_HeatWrap", "M_Ceramic"),
-    "Rubber": ("M_Tire", "M_Rubber", "M_Hose", "M_Seat"),
+    "Rubber": ("M_Tire", "M_Rubber", "M_Hose", "M_Seat", "M_Loom"),
 }
 
 t0 = time.time()
@@ -291,6 +291,12 @@ try:
     log("USD", usd, os.path.getsize(usd) // 1024, "KB")
 except Exception as e:
     log("USD export skipped:", e)
+try:
+    usdz = os.path.join(OUT, NAME + ".usdz")       # self-contained, opens in macOS Quick Look / iOS AR
+    bpy.ops.wm.usd_export(filepath=usdz, selected_objects_only=True, export_materials=True, export_textures=True)
+    log("USDZ", usdz, os.path.getsize(usdz) // 1024, "KB")
+except Exception as e:
+    log("USDZ export skipped:", e)
 for img in bpy.data.images:
     if img.filepath_raw:
         img.filepath = bpy.path.relpath(img.filepath_raw, start=OUT) if False else img.filepath_raw
