@@ -415,6 +415,8 @@ def cage_obj(name, collection, mat, shape_fn, cuts=3, view=2, render=3, size=(1,
         u, vv, w = (max(-1, min(1, round(c, 5))) for c in v.co)
         v.co = shape_fn(u, vv, w)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    if bm.calc_volume(signed=True) < 0:          # guarantee outward normals (game engines cull back faces)
+        bmesh.ops.reverse_faces(bm, faces=bm.faces[:])
     ob = obj_from_bm(name, bm, collection, mat, smooth=True, angle=180)
     mod_subsurf(ob, view, render)
     return ob
@@ -805,7 +807,8 @@ def build_materials():
     M['paint_yellow_heavy'] = mat_paint("M_Paint_Yellow_Battered", Y, chip=0.9, rust=0.85, dirt=0.95, scale=1.5, scratches=1.0, streak=0.85)
     M['paint_red'] = mat_paint("M_Paint_Red_Worn", (0.35, 0.025, 0.015), chip=0.7, rust=0.7, dirt=0.4, scale=3)
     M['paint_black'] = mat_paint("M_Paint_Black_Worn", (0.025, 0.025, 0.025), chip=0.5, rust=0.6, dirt=0.4, scale=2, rough=0.45)
-    M['emblem'] = mat_simple("M_Emblem_Ink", (0.02, 0.018, 0.016), rough=0.55)
+    M['emblem'] = mat_paint("M_Emblem_Ink", (0.014, 0.012, 0.01), rough=0.5, chip=0.75, rust=0.0, dirt=0.4, scale=4,
+                            coat=0.1, primer=Y, metal=Y, scratches=1.0, streak=0.3, dust=0.4, smudge=0.3)
     M['steel_rusty'] = mat_metal("M_Steel_Rusty", (0.50, 0.48, 0.45), 0.4, rust=0.7, grime=0.55, scale=3, dust=0.15,
                                  rust_cols=((0.05, 0.022, 0.01), (0.17, 0.065, 0.025), (0.32, 0.14, 0.045)))
     M['steel_heavy_rust'] = mat_metal("M_Steel_HeavyRust", (0.42, 0.40, 0.38), 0.45, rust=1.05, grime=0.55, scale=2.2, dust=0.15,
@@ -1656,7 +1659,7 @@ def build_body(M, root):
         if 0.2 < u < 0.8 and -0.8 < w < 0.2:     # knee recess
             hw *= 0.9
         return Vector((v * hw, y, z))
-    tk = cage_obj("Body_FuelTank", col, M['paint_yellow'], tank, cuts=3, view=2, render=3)
+    tk = cage_obj("Body_FuelTank", col, M["paint_yellow"], tank, cuts=3, view=3, render=3)
     mod_weighted_normals(tk)
     obs.append(tk)
     bpy.context.view_layer.update()
@@ -1670,17 +1673,18 @@ def build_body(M, root):
         bolt_ring(top + n * 0.001, n, 0.044, 6, col, 'cap', 0.6, name="Body_FuelCapScrew")
     # tank emblem (painted line art) on both sides - ribbons shrink-wrapped onto the tank
     emb = []
-    ring = [(0.03 * cos(a), 0.03 * sin(a) - 0.004) for a in [pi * 1.15 + (pi * 0.7) * i / 40 for i in range(41)]]
-    crown = [(-0.026, 0.004), (-0.02, 0.03), (-0.01, 0.012), (0.0, 0.036), (0.01, 0.012), (0.02, 0.03), (0.026, 0.004), (-0.026, 0.004)]
-    band = [(-0.022, -0.004), (0.022, -0.004)]
-    dots = []
+    ring = [(0.034 * cos(a), 0.034 * sin(a) + 0.012) for a in [2 * pi * i / 64 for i in range(65)]]
+    crown = [(-0.02, -0.004), (-0.023, 0.024), (-0.01, 0.009), (0.0, 0.031), (0.01, 0.009), (0.023, 0.024),
+             (0.02, -0.004), (-0.02, -0.004)]
+    band = [(-0.021, -0.011), (0.021, -0.011)]
     for sx in (-1, 1):
         bm = bmesh.new()
-        ribbon_bm(bm, ring, 0.0035)
-        ribbon_bm(bm, crown, 0.0032)
-        ribbon_bm(bm, band, 0.0028)
-        for cx in (-0.02, 0.0, 0.02):
-            ribbon_bm(bm, circle_pts(0.0028, 10, cx, 0.042) + [circle_pts(0.0028, 10, cx, 0.042)[0]], 0.0028)
+        ribbon_bm(bm, ring, 0.0045)
+        ribbon_bm(bm, crown, 0.004)
+        ribbon_bm(bm, band, 0.004)
+        for cx, cy in ((-0.023, 0.028), (0.0, 0.035), (0.023, 0.028)):
+            pts = circle_pts(0.0018, 12, cx, cy)
+            ribbon_bm(bm, pts + [pts[0]], 0.0034)
         hit, nn = surface_hit(tk, (sx * 0.5, -0.16, 0.955), (-sx, 0, 0))
         if hit is None:
             continue
@@ -1694,11 +1698,14 @@ def build_body(M, root):
         for v in bm.verts:
             v.co.x *= 1.55 * (-1 if sx < 0 else 1)
             v.co.y *= 1.55
+        bm.normal_update()
+        bmesh.ops.reverse_faces(bm, faces=[f for f in bm.faces if f.normal.z < 0])   # decal faces out of the tank
         e = obj_from_bm("Body_TankEmblem" + ("_L" if sx > 0 else "_R"), bm, col, M['emblem'], mat4(hit + nn * 0.004, Rm), smooth=True)
         sw = e.modifiers.new("Shrinkwrap", 'SHRINKWRAP')
         sw.target = tk
         sw.wrap_method = 'NEAREST_SURFACEPOINT'
-        sw.offset = 0.0007
+        sw.wrap_mode = 'OUTSIDE_SURFACE'
+        sw.offset = 0.0008
         emb.append(e)
     obs += emb
 
@@ -1714,7 +1721,7 @@ def build_body(M, root):
         z = lerp(interp(SU, SBOT, u), interp(SU, STOP, u), (w + 1) / 2)
         hw = interp(SU, SHW, u) * interp([-1, -0.5, 0, 0.5, 1], [0.92, 1.0, 1.0, 0.96, 0.8], w)
         return Vector((v * hw, y, z))
-    st = cage_obj("Body_Seat", col, M['leather'], seat, cuts=3, view=2, render=3)
+    st = cage_obj("Body_Seat", col, M["leather"], seat, cuts=3, view=3, render=3)
     obs.append(st)
     # seat pan
     def pan(u, v, w):
@@ -1736,6 +1743,7 @@ def build_body(M, root):
     sw.target = st
     sw.wrap_method = 'NEAREST_SURFACEPOINT'
     sw.offset = 0.0012
+    sw.wrap_mode = 'OUTSIDE_SURFACE'
     sw.use_apply_on_spline = True
     obs.append(pip)
 
