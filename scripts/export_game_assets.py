@@ -19,6 +19,8 @@ What it does (the source .blend is never modified):
   --resume    reuse maps already in <outdir>/textures (the UV unwrap is deterministic), so an
               interrupted bake carries on where it stopped
   --uv-only   unwrap and log a hash of each set's UVs, then quit (determinism check)
+  --reexport  run on a "_game.blend": skip flatten/bake, just write the files again
+  --formats   comma list of glb,fbx,usd,usdz,blend to write (default: all)
 """
 import bpy
 import bmesh
@@ -40,6 +42,8 @@ NAME = arg("--name", "wasteland_scrambler")
 SKIP_BAKE = "--skip-bake" in argv
 RESUME = "--resume" in argv
 UV_ONLY = "--uv-only" in argv
+REEXPORT = "--reexport" in argv
+FORMATS = set(arg("--formats", "glb,fbx,usd,usdz,blend").split(","))
 TEX = os.path.join(OUT, "textures")
 os.makedirs(TEX, exist_ok=True)
 
@@ -56,6 +60,75 @@ bike = bpy.data.collections["Bike"]
 
 def log(*a):
     print("[export %6.1fs]" % (time.time() - t0), *a, flush=True)
+
+
+def viewport_setup():
+    """Open on Material Preview framed on the bike: Solid shading hides the textures."""
+    for scr in bpy.data.screens:
+        for a in scr.areas:
+            if a.type != 'VIEW_3D':
+                continue
+            sp = a.spaces.active
+            sp.shading.type = 'MATERIAL'
+            if sp.region_3d:
+                sp.region_3d.view_location = (0.0, -0.05, 0.62)
+                sp.region_3d.view_distance = 3.6
+
+
+def finish():
+    """Write GLB / FBX / USD / USDZ of the Bike collection and a self-contained _game.blend."""
+    # point images at <outdir>/textures (where the maps were baked or copied) so relative paths resolve
+    for img in bpy.data.images:
+        p = os.path.join(TEX, os.path.basename(img.filepath_raw or ""))
+        if img.source == 'FILE' and img.filepath_raw and os.path.isfile(p):
+            img.filepath = p
+    bpy.ops.object.select_all(action='DESELECT')
+    for o in bike.all_objects:
+        o.select_set(True)
+    if "glb" in FORMATS:
+        glb = os.path.join(OUT, NAME + ".glb")
+        bpy.ops.export_scene.gltf(filepath=glb, export_format='GLB', use_selection=True, export_apply=True,
+                                  export_yup=True, export_extras=True, export_cameras=False, export_lights=False,
+                                  export_animations=False, export_image_format='AUTO')
+        log("GLB", glb, os.path.getsize(glb) // 1024, "KB")
+    if "fbx" in FORMATS:
+        fbx = os.path.join(OUT, NAME + ".fbx")
+        bpy.ops.export_scene.fbx(filepath=fbx, use_selection=True, object_types={'EMPTY', 'MESH'}, apply_unit_scale=True,
+                                 apply_scale_options='FBX_SCALE_ALL', path_mode='COPY', embed_textures=True,
+                                 add_leaf_bones=False, bake_anim=False, mesh_smooth_type='FACE', use_custom_props=True)
+        log("FBX", fbx, os.path.getsize(fbx) // 1024, "KB")
+    # no world: the exporter would turn it into a dome light with a generated colour texture
+    try:
+        if "usd" in FORMATS:
+            usd = os.path.join(OUT, NAME + ".usdc")
+            bpy.ops.wm.usd_export(filepath=usd, selected_objects_only=True, export_materials=True, export_textures=False,
+                                  relative_paths=True, convert_world_material=False, export_lights=False)
+            log("USD", usd, os.path.getsize(usd) // 1024, "KB")
+        if "usdz" in FORMATS:
+            usdz = os.path.join(OUT, NAME + ".usdz")   # self-contained, opens in macOS Quick Look / iOS AR
+            bpy.ops.wm.usd_export(filepath=usdz, selected_objects_only=True, export_materials=True, export_textures=True,
+                                  convert_world_material=False, export_lights=False)
+            log("USDZ", usdz, os.path.getsize(usdz) // 1024, "KB")
+    except Exception as e:
+        log("USD export skipped:", e)
+    if "blend" in FORMATS:
+        # pack the maps so the file works on its own, with paths relative to it for unpacking
+        for img in bpy.data.images:
+            if img.source == 'FILE' and not img.packed_file:
+                img.pack()
+        viewport_setup()
+        game = os.path.join(OUT, NAME + "_game.blend")
+        if bpy.data.filepath != game:
+            bpy.ops.wm.save_as_mainfile(filepath=game, compress=True, relative_remap=True)
+        bpy.ops.file.make_paths_relative()
+        bpy.ops.wm.save_mainfile(compress=True)
+        log("BLEND", game, os.path.getsize(game) // 1024, "KB")
+
+
+if REEXPORT:
+    finish()
+    log("DONE reexport")
+    sys.exit(0)
 
 
 # ------------------------------------------------------------------ 1. flatten the asset
@@ -304,35 +377,5 @@ for m in list(bpy.data.materials):
     if m.users == 0:
         bpy.data.materials.remove(m)
 
-# ------------------------------------------------------------------ 5. export
-bpy.ops.object.select_all(action='DESELECT')
-for o in bike.all_objects:
-    o.select_set(True)
-glb = os.path.join(OUT, NAME + ".glb")
-bpy.ops.export_scene.gltf(filepath=glb, export_format='GLB', use_selection=True, export_apply=True,
-                          export_yup=True, export_extras=True, export_cameras=False, export_lights=False,
-                          export_animations=False, export_image_format='AUTO')
-log("GLB", glb, os.path.getsize(glb) // 1024, "KB")
-fbx = os.path.join(OUT, NAME + ".fbx")
-bpy.ops.export_scene.fbx(filepath=fbx, use_selection=True, object_types={'EMPTY', 'MESH'}, apply_unit_scale=True,
-                         apply_scale_options='FBX_SCALE_ALL', path_mode='COPY', embed_textures=True, add_leaf_bones=False,
-                         bake_anim=False, mesh_smooth_type='FACE', use_custom_props=True)
-log("FBX", fbx, os.path.getsize(fbx) // 1024, "KB")
-try:
-    usd = os.path.join(OUT, NAME + ".usdc")
-    bpy.ops.wm.usd_export(filepath=usd, selected_objects_only=True, export_materials=True, export_textures=False,
-                          relative_paths=True)
-    log("USD", usd, os.path.getsize(usd) // 1024, "KB")
-except Exception as e:
-    log("USD export skipped:", e)
-try:
-    usdz = os.path.join(OUT, NAME + ".usdz")       # self-contained, opens in macOS Quick Look / iOS AR
-    bpy.ops.wm.usd_export(filepath=usdz, selected_objects_only=True, export_materials=True, export_textures=True)
-    log("USDZ", usdz, os.path.getsize(usdz) // 1024, "KB")
-except Exception as e:
-    log("USDZ export skipped:", e)
-for img in bpy.data.images:
-    if img.filepath_raw:
-        img.filepath = bpy.path.relpath(img.filepath_raw, start=OUT) if False else img.filepath_raw
-bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT, NAME + "_game.blend"), compress=True, relative_remap=True)
+finish()
 log("DONE tris=%d" % tris)

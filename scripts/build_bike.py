@@ -3161,10 +3161,24 @@ def build(out_path=None):
         o.hide_set(True)
     build_studio()
     render_settings()
+    viewport_setup()
     bpy.context.view_layer.update()
     if out_path:
         bpy.ops.wm.save_as_mainfile(filepath=out_path, compress=True)
     return root
+
+
+def viewport_setup():
+    """Open on Material Preview framed on the bike: Solid shading hides the dial artwork, emblem and wear."""
+    for scr in bpy.data.screens:
+        for a in scr.areas:
+            if a.type != 'VIEW_3D':
+                continue
+            sp = a.spaces.active
+            sp.shading.type = 'MATERIAL'
+            if sp.region_3d:
+                sp.region_3d.view_location = (0.0, -0.05, 0.62)
+                sp.region_3d.view_distance = 3.6
 
 
 if __name__ == "__main__":

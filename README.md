@@ -17,6 +17,10 @@ at a real component. An automated checker proves it (see [Mechanics](#mechanics)
 |---|---|---|---|---|
 | ![](renders/gauges.png) | ![](renders/cockpit.png) | ![](renders/headstock.png) | ![](renders/leftdetail.png) | ![](renders/reardetail.png) |
 
+> **Opening a `.blend`:** both files open in **Material Preview**. If you see a plain grey bike with blank
+> gauges, the viewport is in *Solid* shading, which hides textures (dial faces, emblem, rust, wear) —
+> press **Z → Material Preview** or use the *Shading* workspace tab.
+
 ## What's in the repo
 
 | Path | What it is |
@@ -27,7 +31,7 @@ at a real component. An automated checker proves it (see [Mechanics](#mechanics)
 | `exports/wasteland_scrambler.fbx` | Same asset for Unreal / Unity (textures embedded). |
 | `exports/wasteland_scrambler.usdz` | Self-contained USDZ — opens directly in macOS Quick Look / iOS AR. |
 | `exports/wasteland_scrambler.usdc` | USD for VFX pipelines (Houdini, Katana, Omniverse…), textures in `exports/textures/`. |
-| `exports/wasteland_scrambler_game.blend` | The baked / modifier-applied game version. |
+| `exports/wasteland_scrambler_game.blend` | The baked / modifier-applied game version (texture maps packed in — works on its own). |
 | `exports/textures/` | 2048² PNG texture sets: `T_{Paint,Metal,Rubber}_{BaseColor,Roughness,Metallic,Normal}`. |
 | `scripts/build_bike.py` | Builds the whole bike from scratch (sectioned per sub-assembly). |
 | `scripts/check_mechanics.py` | Sweeps the rig through its range of motion and reports every interference. |
@@ -147,6 +151,12 @@ blender -b bike/wasteland_scrambler.blend --python scripts/export_game_assets.py
 
 The source `.blend` is never modified. Use `--skip-bake` to test the pipeline quickly, and `--resume` to
 carry on an interrupted bake (maps already in `<outdir>/textures` are reused; the UV unwrap is deterministic).
+After editing the game version (LODs, texture paint-overs…), write the files again without re-baking:
+
+```bash
+blender -b exports/wasteland_scrambler_game.blend --python scripts/export_game_assets.py -- \
+        --outdir exports --reexport            # optionally --formats glb,fbx,usd,usdz,blend
+```
 
 **Engine import notes**
 
