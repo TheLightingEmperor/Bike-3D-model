@@ -55,6 +55,8 @@ at a real component. An automated checker proves it (see [Mechanics](#mechanics)
   → grime (AO-driven) → dust (up-facing) → drip streaks, plus scratches and bump. Gauges use printed dial textures.
 * **Materials (game):** 3 baked texture sets (`MAT_Paint`, `MAT_Metal`, `MAT_Rubber`), the gauge dial textures and a
   handful of flat-colour materials (glass, lenses, wires). The normal maps capture all procedural bump detail.
+  Cover glass (gauges, headlight) is mostly alpha-blended (alpha 0.25, glTF `BLEND`, USD opacity) on top of
+  transmission, so the dials and reflector show in EEVEE, game engines and Quick Look, not only in Cycles.
 
 ## Mechanics
 

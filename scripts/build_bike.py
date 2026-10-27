@@ -846,6 +846,9 @@ def mat_simple(name, rgb, rough=0.5, metal=0.0, transmission=0.0, ior=1.45, emis
     b.inputs['Transmission Weight'].default_value = transmission
     b.inputs['IOR'].default_value = ior
     b.inputs['Coat Weight'].default_value = coat
+    b.inputs['Alpha'].default_value = alpha
+    if alpha < 1.0:
+        m.surface_render_method = 'BLENDED'      # EEVEE; glTF reads a constant alpha < 1 as BLEND
     if emission:
         b.inputs['Emission Color'].default_value = (*emission[0], 1.0)
         b.inputs['Emission Strength'].default_value = emission[1]
@@ -881,7 +884,9 @@ def build_materials():
     M['hose'] = mat_rubber("M_Hose_Rubber", rgb=(0.03, 0.028, 0.025), mud=0.25, rough=0.6, scale=6)
     M['leather'] = mat_leather("M_Seat_Leather")
     M['plastic_black'] = mat_simple("M_Plastic_Black", (0.02, 0.02, 0.02), rough=0.55)
-    M['glass'] = mat_simple("M_Glass_Lens", (0.95, 0.95, 0.95), rough=0.03, transmission=1.0, ior=1.5)
+    # thin cover glass: mostly see-through (alpha) so the dials / reflector show in EEVEE, game engines and
+    # USDZ, which do not trace refraction; the remaining glass layer gives Cycles its reflections
+    M['glass'] = mat_simple("M_Glass_Lens", (0.95, 0.95, 0.95), rough=0.03, transmission=1.0, ior=1.5, alpha=0.25)
     M['reflector'] = mat_simple("M_Reflector_Chrome", (0.9, 0.9, 0.9), rough=0.06, metal=1.0)
     M['lens_orange'] = mat_simple("M_Lens_Amber", (0.95, 0.35, 0.02), rough=0.15, transmission=0.6, ior=1.5,
                                   emission=((1.0, 0.35, 0.02), 0.0))
