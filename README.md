@@ -31,7 +31,7 @@ can be re-proportioned, re-detailed or rebuilt, and it ships with game-ready bak
   29" knobby tyres on 17" rims.
 * **Orientation:** the bike faces **−Y** in Blender, +Z up, origin on the ground between the axles.
   The glTF exporter converts this to the glTF convention (+Y up, facing +Z).
-* **Triangles:** ≈ 335k at the game LOD (modifier viewport levels). Render levels in the master
+* **Triangles:** ≈ 352k at the game LOD (modifier viewport levels). Render levels in the master
   file are higher for close-up VFX work.
 * **Objects:** ~460 named meshes in collections per sub-assembly — `Frame`, `Bodywork`, `Engine`,
   `Exhaust`, `FrontEnd`, `RearEnd`, `Wheels`, `Controls` — plus `Cutters` (hidden boolean helpers) and
