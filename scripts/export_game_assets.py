@@ -15,6 +15,10 @@ What it does (the source .blend is never modified):
      (glass, lenses, wires) stay as plain factors.
   5. Exports GLB (with embedded textures), FBX (embedded textures), USD + USDZ, and saves
      a "_game.blend" plus the PNG maps.
+
+  --resume    reuse maps already in <outdir>/textures (the UV unwrap is deterministic), so an
+              interrupted bake carries on where it stopped
+  --uv-only   unwrap and log a hash of each set's UVs, then quit (determinism check)
 """
 import bpy
 import bmesh
@@ -34,6 +38,8 @@ RES = int(arg("--res", "2048"))
 SAMPLES = int(arg("--samples", "24"))
 NAME = arg("--name", "wasteland_scrambler")
 SKIP_BAKE = "--skip-bake" in argv
+RESUME = "--resume" in argv
+UV_ONLY = "--uv-only" in argv
 TEX = os.path.join(OUT, "textures")
 os.makedirs(TEX, exist_ok=True)
 
@@ -162,6 +168,19 @@ def unwrap(objs):
     bpy.ops.object.mode_set(mode='OBJECT')
 
 
+def uv_hash(objs):
+    import hashlib
+    import numpy as np
+    h = hashlib.sha1()
+    for me in sorted({o.data for o in objs}, key=lambda d: d.name):
+        uv = me.uv_layers.active.data
+        a = np.empty(len(uv) * 2, dtype=np.float32)
+        uv.foreach_get("uv", a)
+        h.update(me.name.encode())
+        h.update(np.round(a, 5).tobytes())
+    return h.hexdigest()[:12]
+
+
 # ------------------------------------------------------------------ 3. bake
 sc.render.engine = 'CYCLES'
 sc.cycles.device = 'CPU'
@@ -225,19 +244,31 @@ for s, objs in set_objs.items():
     if not objs:
         continue
     unwrap(objs)
-    log("unwrapped", s)
+    log("unwrapped", s, "uv", uv_hash(objs))
+    if UV_ONLY:
+        continue
     mats = sorted({sl.material for o in objs for sl in o.material_slots if sl.material and is_procedural(sl.material)},
                   key=lambda m: m.name)
     imgs = {}
     for kind, cs in (("color", 'sRGB'), ("rough", 'Non-Color'), ("metal", 'Non-Color'), ("normal", 'Non-Color')):
         nm = "T_%s_%s" % (s, {"color": "BaseColor", "rough": "Roughness", "metal": "Metallic", "normal": "Normal"}[kind])
+        path = os.path.join(TEX, nm + ".png")
+        if RESUME and os.path.exists(path):
+            img = bpy.data.images.load(path)
+            if tuple(img.size) == (RES, RES):
+                img.name = nm
+                img.colorspace_settings.name = cs
+                imgs[kind] = img
+                log("reused", nm)
+                continue
+            bpy.data.images.remove(img)
         img = bpy.data.images.new(nm, RES, RES, alpha=False, float_buffer=False)
         img.colorspace_settings.name = cs
         if kind == 'normal':
             img.generated_color = (0.5, 0.5, 1.0, 1.0)
         if not SKIP_BAKE:
             bake_pass(objs, mats, img, kind)
-        img.filepath_raw = os.path.join(TEX, nm + ".png")
+        img.filepath_raw = path
         img.file_format = 'PNG'
         img.save()
         imgs[kind] = img
@@ -264,6 +295,9 @@ for s, objs in set_objs.items():
         for sl in o.material_slots:
             if sl.material and is_procedural(sl.material):
                 sl.material = gm
+
+if UV_ONLY:
+    sys.exit(0)
 
 # clean up the now unused procedural materials
 for m in list(bpy.data.materials):

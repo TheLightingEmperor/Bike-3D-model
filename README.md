@@ -145,7 +145,8 @@ blender -b bike/wasteland_scrambler.blend --python scripts/export_game_assets.py
         --outdir exports --res 4096 --samples 32     # 4K texture sets
 ```
 
-The source `.blend` is never modified. Use `--skip-bake` to test the pipeline quickly.
+The source `.blend` is never modified. Use `--skip-bake` to test the pipeline quickly, and `--resume` to
+carry on an interrupted bake (maps already in `<outdir>/textures` are reused; the UV unwrap is deterministic).
 
 **Engine import notes**
 
