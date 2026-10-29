@@ -121,6 +121,7 @@ def finish():
                 img.pack()
         viewport_setup()
         game = os.path.join(OUT, NAME + "_game.blend")
+        bpy.context.preferences.filepaths.save_version = 0      # no .blend1 backup next to the export
         if bpy.data.filepath != game:
             bpy.ops.wm.save_as_mainfile(filepath=game, compress=True, relative_remap=True)
         bpy.ops.file.make_paths_relative()
