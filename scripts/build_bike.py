@@ -53,7 +53,9 @@ P = dict(
     front_tire=dict(R=0.37, half_w=0.108, R_rim=0.215, lug_h=0.024, lugs=21),
     rear_tire=dict(R=0.375, half_w=0.122, R_rim=0.215, lug_h=0.026, lugs=23),
     swing_pivot=Vector((0.0, 0.22, 0.43)),
-    yellow=(0.80, 0.43, 0.006),
+    # paint scheme (linear RGB): petrol-teal bodywork, satin-black chassis, safety-orange accents, bone trim
+    paint=dict(body=(0.010, 0.105, 0.088), frame=(0.018, 0.019, 0.021), accent=(0.78, 0.095, 0.011),
+               trim=(0.77, 0.69, 0.52)),
 )
 SLIDER_R, STAN_R, CHAIN_HALF = 0.0395, 0.0265, 0.0095
 
@@ -664,8 +666,10 @@ def _top_dust(nt, co, loc, amount):
 def mat_paint(name, rgb, rough=0.34, chip=0.5, rust=0.6, dirt=0.5, scale=1.0, coat=0.35,
               primer=(0.20, 0.19, 0.17), metal=(0.22, 0.21, 0.2), scratches=0.6, streak=0.5, dust=0.5, smudge=0.6,
               decal=None):
-    """decal: dict(image=bpy Image (white = ink), center=(y, z), size=m, ink=rgb) projected onto both +-X sides
-    in object space. It sits *under* the wear layers so chips, scratches and grime break it up like real paint."""
+    """decal: dict(image=bpy Image, center=(y, z), size=m, ink=rgb, ink2=rgb) projected onto both +-X sides in
+    object space (flipped on the left side so artwork reads the right way round on both). Red channel = ink,
+    green channel = ink2 (optional). It sits *under* the wear layers so chips, scratches and grime break it up
+    like real paint."""
     m, nt, b = new_mat(name, rgb)
     tc = N(nt, 'ShaderNodeTexCoord', (-2000, 0))
     co = tc.outputs['Object']
@@ -697,8 +701,11 @@ def mat_paint(name, rgb, rough=0.34, chip=0.5, rust=0.6, dirt=0.5, scale=1.0, co
         nt.links.new(co, sep.inputs[0])
         cy, cz = decal['center']
         sz = decal['size']
-        u = mth(nt, (-1550, 950), 'MULTIPLY_ADD', sep.outputs['Y'], -1.0 / sz)
-        u.node.inputs[2].default_value = 0.5 + cy / sz
+        # u = 0.5 + (y - cy) * sign(x) / size: un-mirrored on both sides
+        dy = mth(nt, (-1650, 1050), 'MULTIPLY', mth(nt, (-1750, 1050), 'SUBTRACT', sep.outputs['Y'], cy),
+                 mth(nt, (-1750, 1150), 'SIGN', sep.outputs['X']))
+        u = mth(nt, (-1550, 950), 'MULTIPLY_ADD', dy, 1.0 / sz)
+        u.node.inputs[2].default_value = 0.5
         v = mth(nt, (-1550, 850), 'MULTIPLY_ADD', sep.outputs['Z'], 1.0 / sz)
         v.node.inputs[2].default_value = 0.5 - cz / sz
         cmb = N(nt, 'ShaderNodeCombineXYZ', (-1400, 900))
@@ -710,9 +717,14 @@ def mat_paint(name, rgb, rough=0.34, chip=0.5, rust=0.6, dirt=0.5, scale=1.0, co
         nsep = N(nt, 'ShaderNodeSeparateXYZ', (-1550, 700))
         nt.links.new(tc.outputs['Normal'], nsep.inputs[0])
         side = ramp(nt, (-1250, 700), mth(nt, (-1400, 700), 'ABSOLUTE', nsep.outputs['X']), [(0.45, (0, 0, 0)), (0.65, (1, 1, 1))])
-        dm_ = mth(nt, (-1100, 800), 'MULTIPLY', tex.outputs['Color'], side)
-        ink = mixc(nt, (-1100, 650), mth(nt, (-1200, 600), 'MULTIPLY', n2.outputs['Fac'], 0.25), decal.get('ink', (0.012, 0.011, 0.01)), pv)
-        pv = mixc(nt, (-950, 700), dm_, pv, ink)
+        chans = N(nt, 'ShaderNodeSeparateColor', (-1150, 950))
+        nt.links.new(tex.outputs['Color'], chans.inputs['Color'])
+        fade = mth(nt, (-1200, 600), 'MULTIPLY', n2.outputs['Fac'], 0.1)       # a little base paint shows through
+        for ch, key, y_ in (('Green', 'ink2', 550), ('Red', 'ink', 700)):
+            if key not in decal:
+                continue
+            dm_ = mth(nt, (-1100, y_ + 100), 'MULTIPLY', chans.outputs[ch], side)
+            pv = mixc(nt, (-950, y_), dm_, pv, mixc(nt, (-1100, y_), fade, decal[key], pv))
     rust_col = ramp(nt, (-1300, -800), n3.outputs['Color'],
                     [(0.35, (0.075, 0.028, 0.01)), (0.6, (0.26, 0.085, 0.025)), (0.8, (0.40, 0.17, 0.05))])
     c = mixc(nt, (-850, 500), m_primer, pv, primer)
@@ -856,14 +868,18 @@ def mat_simple(name, rgb, rough=0.5, metal=0.0, transmission=0.0, ior=1.45, emis
 
 
 def build_materials():
-    Y = P['yellow']
+    C = P['paint']
     M = {}
-    M['paint_yellow'] = mat_paint("M_Paint_Yellow_Worn", Y, chip=0.62, rust=0.65, dirt=0.8, scale=1.2, scratches=0.8, streak=0.7, dust=0.45)
-    M['paint_yellow_heavy'] = mat_paint("M_Paint_Yellow_Battered", Y, chip=0.9, rust=0.85, dirt=0.95, scale=1.5, scratches=1.0, streak=0.85)
-    M['paint_red'] = mat_paint("M_Paint_Red_Worn", (0.35, 0.025, 0.015), chip=0.7, rust=0.7, dirt=0.4, scale=3)
+    # bodywork (tank, fenders, covers, tail) / chassis (frame, swingarm, fork lowers) / accents (rims, shock, pedal)
+    M['paint_body'] = mat_paint("M_Paint_Body_Worn", C['body'], chip=0.62, rust=0.65, dirt=0.8, scale=1.2, scratches=0.8, streak=0.7, dust=0.45)
+    M['paint_body_heavy'] = mat_paint("M_Paint_Body_Battered", C['body'], chip=0.9, rust=0.85, dirt=0.95, scale=1.5, scratches=1.0, streak=0.85)
+    M['paint_frame'] = mat_paint("M_Paint_Frame_Worn", C['frame'], chip=0.6, rust=0.7, dirt=0.7, scale=1.4, scratches=0.8, streak=0.6,
+                                 dust=0.5, rough=0.42, coat=0.15)
+    M['paint_frame_heavy'] = mat_paint("M_Paint_Frame_Battered", C['frame'], chip=0.85, rust=0.85, dirt=0.9, scale=1.6, scratches=1.0,
+                                       streak=0.8, dust=0.5, rough=0.45, coat=0.1)
+    M['paint_accent'] = mat_paint("M_Paint_Accent_Worn", C['accent'], chip=0.7, rust=0.7, dirt=0.5, scale=3)
+    M['paint_accent_heavy'] = mat_paint("M_Paint_Accent_Battered", C['accent'], chip=0.85, rust=0.8, dirt=0.9, scale=1.5, scratches=1.0, streak=0.8)
     M['paint_black'] = mat_paint("M_Paint_Black_Worn", (0.025, 0.025, 0.025), chip=0.5, rust=0.6, dirt=0.4, scale=2, rough=0.45)
-    M['emblem'] = mat_paint("M_Emblem_Ink", (0.014, 0.012, 0.01), rough=0.5, chip=0.75, rust=0.0, dirt=0.4, scale=4,
-                            coat=0.1, primer=Y, metal=Y, scratches=1.0, streak=0.3, dust=0.4, smudge=0.3)
     M['steel_rusty'] = mat_metal("M_Steel_Rusty", (0.50, 0.48, 0.45), 0.4, rust=0.7, grime=0.55, scale=3, dust=0.15,
                                  rust_cols=((0.05, 0.022, 0.01), (0.17, 0.065, 0.025), (0.32, 0.14, 0.045)))
     M['steel_heavy_rust'] = mat_metal("M_Steel_HeavyRust", (0.42, 0.40, 0.38), 0.45, rust=1.05, grime=0.55, scale=2.2, dust=0.15,
@@ -1075,7 +1091,7 @@ def build_rim(prefix, axle, spec, col, M):
              (wr - 0.004, Rr + 0.0135), (wr, Rr + 0.012)]
     inner = [(wr + 0.002, Rr + 0.004), (wr, Rr - 0.012), (wr - 0.01, Rr - 0.02), (0.3 * wr, Rr - 0.026),
              (-0.3 * wr, Rr - 0.026), (-wr + 0.01, Rr - 0.02), (-wr, Rr - 0.012), (-wr - 0.002, Rr + 0.004)]
-    rim = revolve_obj(prefix + "_Rim", outer + inner, col, M['paint_yellow_heavy'], mat4(axle), segs=96,
+    rim = revolve_obj(prefix + "_Rim", outer + inner, col, M['paint_accent_heavy'], mat4(axle), segs=96,
                       closed=True, axis='X', angle=35)
     mod_weighted_normals(rim)
     # valve stem
@@ -1325,7 +1341,7 @@ def build_front(M, root):
     # --- sliders, seals, axle lugs: ride on the fork travel ---
     prof = [(-0.045, 0.0), (-0.045, 0.026), (-0.03, 0.034), (0.25, 0.036), (0.36, 0.038), (0.372, SLIDER_R), (0.385, SLIDER_R),
             (0.385, 0.0285), (0.36, 0.0285)]
-    sl = revolve_obj("Fork_Sliders", prof, col, M['paint_yellow_heavy'], F.M(0.0), segs=40, closed=False, axis='Z', angle=40)
+    sl = revolve_obj("Fork_Sliders", prof, col, M['paint_frame_heavy'], F.M(0.0), segs=40, closed=False, axis='Z', angle=40)
     for v in sl.data.vertices:
         v.co.x -= fx
     mod_mirror(sl)
@@ -1339,18 +1355,18 @@ def build_front(M, root):
     bm = bmesh.new()
     bm_box(bm, (0.05, 0.07, 0.07), Matrix.Translation((-fx, 0.004, -0.012)))
     bm_cyl(bm, 0.03, 0.03, 0.06, 32, Matrix.Translation((-fx - 0.03, 0, 0)) @ Matrix.Rotation(pi / 2, 4, 'Y'))
-    lug = obj_from_bm("Fork_AxleLugs", bm, col, M['paint_yellow_heavy'], F.M(0.0), angle=40)
+    lug = obj_from_bm("Fork_AxleLugs", bm, col, M['paint_frame_heavy'], F.M(0.0), angle=40)
     mod_bevel(lug, 0.006, 3, 40)
     mod_mirror(lug)
     T.append(lug)
     for sx in (-1, 1):
         for dz in (-0.022, -0.042):
             T.append(bolt(F.p(dz, 0.035, sx * (fx + 0.012)), F.nb, col, 'cap', 1.0, "Fork_AxlePinchBolt"))
-    # fork brace: yellow arch plate bolted to the front of the sliders, the fender hangs from it
+    # fork brace: painted arch plate bolted to the front of the sliders, the fender hangs from it
     W = fx + 0.03
     arch = [(-W, 0.26), (-W, 0.36), (-W + 0.06, 0.448), (W - 0.06, 0.448), (W, 0.36), (W, 0.26),
             (W - 0.05, 0.26), (W - 0.05, 0.35), (W - 0.095, 0.424), (-(W - 0.095), 0.424), (-(W - 0.05), 0.35), (-(W - 0.05), 0.26)]
-    br = extrude_obj("Fork_Brace", arch, 0.012, col, M['paint_yellow'], F.M(0.0, 0, 0, Matrix.Rotation(pi / 2, 3, 'X')) @
+    br = extrude_obj("Fork_Brace", arch, 0.012, col, M['paint_frame'], F.M(0.0, 0, 0, Matrix.Rotation(pi / 2, 3, 'X')) @
                      Matrix.Translation((0, 0, 0.044)), bevel=0.003)
     T.append(br)
     for sx in (-1, 1):
@@ -1373,7 +1389,7 @@ def build_front(M, root):
     for i in range(nb_):
         for j in range(len(sec) - 1):
             bm.faces.new((rows[i][j], rows[i][j + 1], rows[i + 1][j + 1], rows[i + 1][j]))
-    fender = obj_from_bm("Fender_Front", bm, col, M['paint_yellow'], mat4(A_), angle=60)
+    fender = obj_from_bm("Fender_Front", bm, col, M['paint_body'], mat4(A_), angle=60)
     mod_solidify(fender, 0.0035, 1)
     mod_subsurf(fender, 1, 2)
     mod_weighted_normals(fender)
@@ -1447,7 +1463,7 @@ def build_front(M, root):
         clamp_c = F.p(0.665, 0, sx * fx)
         bm = bmesh.new()
         bm_cyl(bm, 0.036, 0.036, 0.034, 32, Matrix.Translation((0, 0, -0.017)))
-        cl = obj_from_bm("Headlight_ForkClamp" + ("_L" if sx > 0 else "_R"), bm, col, M['paint_yellow'], mat4(clamp_c, Rf))
+        cl = obj_from_bm("Headlight_ForkClamp" + ("_L" if sx > 0 else "_R"), bm, col, M['paint_frame'], mat4(clamp_c, Rf))
         mod_bevel(cl, 0.003, 2, 40)
         S.append(cl)
         S.append(bolt(clamp_c + F.nb * 0.037 + Vector((sx * 0.0, 0, 0)), F.nb, col, 'cap', 0.9, "Headlight_ClampBolt"))
@@ -1456,7 +1472,7 @@ def build_front(M, root):
         anchor('ear_a_' + ('L' if sx > 0 else 'R'), ear_a, 'steer')
         anchor('ear_b_' + ('L' if sx > 0 else 'R'), ear_b, 'steer')
         S.append(curve_obj("Headlight_Ear" + ("_L" if sx > 0 else "_R"),
-                           [ear_a, (ear_a + ear_b) / 2 + Vector((sx * 0.012, 0, 0.012)), ear_b], 0.009, col, M['paint_yellow'], mode='smooth'))
+                           [ear_a, (ear_a + ear_b) / 2 + Vector((sx * 0.012, 0, 0.012)), ear_b], 0.009, col, M['paint_frame'], mode='smooth'))
         S.append(bolt(ear_b + Vector((sx * 0.004, 0, 0)), (sx, 0, 0), col, 'bolt', 1.3, "Headlight_EarBolt"))
         mk = clamp_c + Vector((sx * 0.055, -0.02, 0.012))
         S.append(cyl_obj("Indicator_Front_Stalk", clamp_c + Vector((sx * 0.034, -0.01, 0.01)), mk, 0.006, col, M['rubber'], segs=12))
@@ -1764,7 +1780,7 @@ def build_cockpit(M, F, steer):
     ring_c = kh + d * 0.014 + F.nb * 0.012
     S.append(revolve_obj("Ignition_KeyRing", [(-0.0007, 0.0085), (0.0007, 0.0085), (0.0007, 0.0099), (-0.0007, 0.0099)], col, M['steel_bright'],
                          mat4(ring_c, Matrix.Rotation(pi / 2, 3, 'Y')), segs=24, axis='Z', closed=True))
-    S.append(box_obj("Ignition_KeyTag", ring_c + Vector((0, 0.014, -0.012)), (0.003, 0.016, 0.026), col, M['paint_red'], rot=(-20, 0, 0), bevel=0.0012))
+    S.append(box_obj("Ignition_KeyTag", ring_c + Vector((0, 0.014, -0.012)), (0.003, 0.016, 0.026), col, M['paint_accent'], rot=(-20, 0, 0), bevel=0.0012))
     anchor('ignition_back', ig - d * 0.03, 'steer')
     for ob in S:
         if ob.parent is None:
@@ -1824,7 +1840,7 @@ FRAME = {}
 
 def build_frame(M, F, root):
     col = coll('Frame', COLL['Bike'])
-    Yp = M['paint_yellow']
+    Yp = M['paint_frame']
     off = P['fork_offset']
     yb, yt = P['yokes']
     obs = []
@@ -1861,7 +1877,7 @@ def build_frame(M, F, root):
                            mat4(F.p(yt - 0.075, off + 0.06), Matrix(((0, 0, 1), (1, 0, 0), (0, 1, 0)))), bevel=0.0015))
     # swingarm pivot plates - rear edge stops short of the swingarm cross brace
     plate = [(0.13, 0.33), (0.272, 0.33), (0.276, 0.52), (0.25, 0.60), (0.20, 0.62), (0.13, 0.55)]
-    pp = extrude_obj("Frame_PivotPlates", plate, 0.018, col, M['paint_yellow_heavy'],
+    pp = extrude_obj("Frame_PivotPlates", plate, 0.018, col, M['paint_frame_heavy'],
                      mat4(Vector((0.126, 0, 0)), Matrix(((0, 0, 1), (1, 0, 0), (0, 1, 0)))), bevel=0.004)
     mod_mirror(pp, mirror_obj=root)
     obs.append(pp)
@@ -1934,16 +1950,17 @@ def build_body(M, root):
         if 0.2 < u < 0.8 and -0.8 < w < 0.2:
             hw *= 0.9
         return Vector((v * hw, y, z))
-    tk = cage_obj("Body_FuelTank", col, M["paint_yellow"], tank, cuts=3, view=3, render=3)
+    tk = cage_obj("Body_FuelTank", col, M["paint_body"], tank, cuts=3, view=3, render=3)
     mod_weighted_normals(tk)
     obs.append(tk)
     bpy.context.view_layer.update()
     # painted emblem: projected decal in the tank paint (no separate geometry)
     hit, nn = surface_hit(tk, (0.5, -0.155, 0.965), (-1, 0, 0))
-    mask = load_image("emblem_crown_mask.png")
+    mask = load_image("emblem_k_mask.png")
     if hit is not None and mask is not None:
-        tank_mat = mat_paint("M_Paint_Yellow_Tank", P['yellow'], chip=0.62, rust=0.65, dirt=0.8, scale=1.2, scratches=0.8, streak=0.7, dust=0.45,
-                             decal=dict(image=mask, center=(hit.y, hit.z), size=0.124))
+        C = P['paint']
+        tank_mat = mat_paint("M_Paint_Body_Tank", C['body'], chip=0.62, rust=0.65, dirt=0.8, scale=1.2, scratches=0.8, streak=0.7, dust=0.45,
+                             decal=dict(image=mask, center=(hit.y, hit.z), size=0.15, ink=C['accent'], ink2=C['trim']))
         tk.data.materials[0] = tank_mat
     top, n = surface_hit(tk, (0, -0.2, 1.3), (0, 0, -1))
     if top is not None:
@@ -2009,7 +2026,7 @@ def build_body(M, root):
         if u >= 0.99:
             y += 0.02 * (w + 1) / 2
         return Vector((v * hw, y, z))
-    tl = cage_obj("Body_TailCowl", col, M['paint_yellow'], tail, cuts=3, view=2, render=3)
+    tl = cage_obj("Body_TailCowl", col, M['paint_body'], tail, cuts=3, view=2, render=3)
     mod_weighted_normals(tl)
     obs.append(tl)
     bpy.context.view_layer.update()
@@ -2037,7 +2054,7 @@ def build_body(M, root):
         z = lerp(0.665, 0.845, (w + 1) / 2)
         x = 0.123 + (v + 1) / 2 * 0.018 - 0.01 * (w + 1) / 2
         return Vector((x, y, z))
-    sp = cage_obj("Body_SideCover_L", col, M['paint_yellow'], side_panel, cuts=2, view=2, render=3)
+    sp = cage_obj("Body_SideCover_L", col, M['paint_body'], side_panel, cuts=2, view=2, render=3)
     obs.append(sp)
     obs.append(revolve_obj("Body_SideBadge_L", [(0, 0.0), (0, 0.032), (0.004, 0.033), (0.007, 0.028), (0.008, 0.012), (0.009, 0.0)],
                            col, M['chrome'], mat4(Vector((0.142, 0.31, 0.76)), frame_from_z(Vector((1, 0, 0)))), segs=40, axis='Z'))
@@ -2049,7 +2066,7 @@ def build_body(M, root):
         z = lerp(0.50, 0.70, (w + 1) / 2)
         x = 0.126 + (v + 1) / 2 * 0.04
         return Vector((x, y, z))
-    sh = cage_obj("Body_FrontShrouds", col, M['paint_yellow_heavy'], shroud, cuts=1, view=2, render=3)
+    sh = cage_obj("Body_FrontShrouds", col, M['paint_body_heavy'], shroud, cuts=1, view=2, render=3)
     for m_ in sh.modifiers:
         m_.levels, m_.render_levels = 1, 2
     mod_bevel(sh, 0.004, 2, 30, name="EdgeBevel")
@@ -2073,7 +2090,7 @@ def build_body(M, root):
     for i in range(len(rows) - 1):
         for j in range(len(secx) - 1):
             bm.faces.new((rows[i][j], rows[i][j + 1], rows[i + 1][j + 1], rows[i + 1][j]))
-    skid = obj_from_bm("Body_SkidPlate", bm, col, M['paint_yellow_heavy'], angle=40)
+    skid = obj_from_bm("Body_SkidPlate", bm, col, M['paint_frame_heavy'], angle=40)
     mod_solidify(skid, 0.005, -1)
     mod_bevel(skid, 0.0015, 2, 30)
     obs.append(skid)
@@ -2395,7 +2412,7 @@ def build_rear(M, root):
     piv = make_empty("RearEnd_SwingarmPivot", mat4(sp), col, 'SINGLE_ARROW', 0.2)
     parent_later(piv, root)
     obs = []
-    Yh = M['paint_yellow_heavy']
+    Yh = M['paint_frame_heavy']
     arm = beam_obj("Swingarm_Arms", Vector((ax_, sp.y + 0.02, sp.z)), Vector((ax_, RA.y + 0.05, RA.z)), 0.036, 0.082, 0.032, 0.056, col, Yh, bevel=0.008, segs=3)
     mod_mirror(arm, mirror_obj=root)
     obs.append(arm)
@@ -2438,7 +2455,7 @@ def build_rear(M, root):
     for i in range(12):
         for j in range(3):
             bm.faces.new((rows[i][j], rows[i][j + 1], rows[i + 1][j + 1], rows[i + 1][j]))
-    hug = obj_from_bm("Fender_Rear_Hugger", bm, col, M['paint_yellow'], mat4(RA), angle=50)
+    hug = obj_from_bm("Fender_Rear_Hugger", bm, col, M['paint_body'], mat4(RA), angle=50)
     mod_solidify(hug, 0.003, 1)
     mod_subsurf(hug, 1, 2)
     obs.append(hug)
@@ -2552,10 +2569,10 @@ def build_rear(M, root):
     sh_up.append(revolve_obj("Shock_Body", body_prof, col, M['alu_cast'], mat4(top, Rt), segs=32, axis='Z'))
     sh_up.append(cyl_obj("Shock_TopEye", top + Vector((-0.012, 0, 0)), top + Vector((0.012, 0, 0)), 0.014, col, M['alu_cast'], segs=24))
     res0 = top + axd * 0.04 + Vector((0.043, 0.0, 0.0))
-    sh_up.append(cyl_obj("Shock_Reservoir", res0, res0 + axd * 0.11, 0.018, col, M['paint_red'], segs=32, bevel=0.003))
+    sh_up.append(cyl_obj("Shock_Reservoir", res0, res0 + axd * 0.11, 0.018, col, M['paint_accent'], segs=32, bevel=0.003))
     sh_up.append(cable_obj("Shock_ReservoirHose", [top + axd * 0.05 + Vector((0.022, 0, 0)), top + axd * 0.036 + Vector((0.034, 0, 0.0)), res0 + Vector((0, 0, 0.004))],
                            0.004, col, M['braided']))
-    sh_up.append(revolve_obj("Shock_PreloadCollar", [(0.04, 0.025), (0.04, 0.033), (0.052, 0.033), (0.052, 0.025)], col, M['paint_red'],
+    sh_up.append(revolve_obj("Shock_PreloadCollar", [(0.04, 0.025), (0.04, 0.033), (0.052, 0.033), (0.052, 0.025)], col, M['paint_accent'],
                              mat4(top, Rt), segs=32, axis='Z', closed=True))
     Rb = frame_from_z(-axd)
     sh_lo.append(cyl_obj("Shock_Shaft", bot, bot - axd * (Lsh - 0.14), 0.0075, col, M['chrome'], segs=20))
@@ -2572,7 +2589,7 @@ def build_rear(M, root):
     circ = [bm.verts.new((0.031 + 0.0055 * cos(a), 0.0055 * sin(a), 0.0)) for a in [2 * pi * i / 10 for i in range(10)]]
     for i in range(10):
         bm.edges.new((circ[i], circ[(i + 1) % 10]))
-    spring = obj_from_bm("Shock_Spring", bm, col, M['paint_red'], mat4(bot - axd * 0.03, Rs), uv=False)
+    spring = obj_from_bm("Shock_Spring", bm, col, M['paint_accent'], mat4(bot - axd * 0.03, Rs), uv=False)
     scr = spring.modifiers.new("Coil", 'SCREW')
     scr.axis = 'Y'
     scr.angle = 2 * pi * turns
@@ -2625,10 +2642,10 @@ def build_controls(M, root):
     obs.append(cyl_obj("Pedal_Brake_PivotBoss", Vector((-0.104, 0.165, 0.27)), pv, 0.011, col, M['steel_rusty'], segs=20))
     obs.append(cyl_obj("Pedal_Brake_Pivot", pv, pv + Vector((-0.016, 0, 0)), 0.012, col, M['steel_bright'], segs=24))
     obs.append(curve_obj("Pedal_Brake_Arm", [pv + Vector((-0.012, -0.004, -0.004)), Vector((-0.142, 0.10, 0.262)), Vector((-0.176, -0.04, 0.258)),
-                                             Vector((-0.192, -0.088, 0.278))], 0.0085, col, M['paint_red'], mode='bend', bend=0.04))
+                                             Vector((-0.192, -0.088, 0.278))], 0.0085, col, M['paint_accent'], mode='bend', bend=0.04))
     obs.append(box_obj("Pedal_Brake_Pad", Vector((-0.207, -0.088, 0.282)), (0.045, 0.03, 0.012), col, M['steel_rusty'], rot=(10, 0, 0), bevel=0.003))
     lever = pv + Vector((-0.008, 0.02, 0.03))
-    obs.append(curve_obj("Pedal_Brake_Lever", [pv + Vector((-0.008, 0.0, 0.0)), lever], 0.006, col, M['paint_red']))
+    obs.append(curve_obj("Pedal_Brake_Lever", [pv + Vector((-0.008, 0.0, 0.0)), lever], 0.006, col, M['paint_accent']))
     obs.append(cyl_obj("Pedal_Brake_Clevis", lever + Vector((0.006, 0, 0)), lever + Vector((-0.006, 0, 0)), 0.006, col, M['steel_bright'], segs=12))
     mc_f = Vector((-0.128, 0.205, 0.303))
     mc_r = Vector((-0.128, 0.262, 0.308))

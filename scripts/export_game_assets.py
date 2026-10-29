@@ -19,6 +19,8 @@ What it does (the source .blend is never modified):
   --resume    reuse maps already in <outdir>/textures (the UV unwrap is deterministic), so an
               interrupted bake carries on where it stopped
   --uv-only   unwrap and log a hash of each set's UVs, then quit (determinism check)
+  --uv-from   a previous "_game.blend": copy its UVs (per mesh, when the geometry matches) instead of
+              unwrapping, so UVs stay stable between versions and --resume can reuse that set's maps
   --reexport  run on a "_game.blend": skip flatten/bake, just write the files again
   --formats   comma list of glb,fbx,usd,usdz,blend to write (default: all)
 """
@@ -42,6 +44,7 @@ NAME = arg("--name", "wasteland_scrambler")
 SKIP_BAKE = "--skip-bake" in argv
 RESUME = "--resume" in argv
 UV_ONLY = "--uv-only" in argv
+UV_FROM = arg("--uv-from", None)
 REEXPORT = "--reexport" in argv
 FORMATS = set(arg("--formats", "glb,fbx,usd,usdz,blend").split(","))
 TEX = os.path.join(OUT, "textures")
@@ -241,6 +244,45 @@ def unwrap(objs):
     bpy.ops.object.mode_set(mode='OBJECT')
 
 
+def load_uv_source(path):
+    """{mesh name: (vertex coords, loop uvs)} from a previous game export (linked, so names never clash)."""
+    import numpy as np
+    with bpy.data.libraries.load(path, link=True) as (src, dst):
+        dst.meshes = list(src.meshes)
+    out = {}
+    for me in dst.meshes:
+        if me is None or not me.uv_layers:
+            continue
+        co = np.empty(len(me.vertices) * 3, dtype=np.float32)
+        me.vertices.foreach_get("co", co)
+        uv = np.empty(len(me.loops) * 2, dtype=np.float32)
+        me.uv_layers.active.data.foreach_get("uv", uv)
+        out[me.name] = (co, uv)
+    for lib in list(bpy.data.libraries):
+        bpy.data.libraries.remove(lib)
+    return out
+
+
+def copy_uvs(objs, src):
+    """Copy the whole set's UVs from src, only if every mesh in it matches (same vertices, same loop count)."""
+    import numpy as np
+    pairs = []
+    for me in {o.data for o in objs}:
+        hit = src.get(me.name)
+        if hit is None or len(hit[1]) != len(me.loops) * 2:
+            return me.name
+        co = np.empty(len(me.vertices) * 3, dtype=np.float32)
+        me.vertices.foreach_get("co", co)
+        if len(co) != len(hit[0]) or not np.allclose(co, hit[0], atol=1e-5):
+            return me.name
+        pairs.append((me, hit[1]))
+    for me, uv in pairs:
+        if not me.uv_layers:
+            me.uv_layers.new(name="UVMap")
+        me.uv_layers.active.data.foreach_set("uv", uv)
+    return None
+
+
 def uv_hash(objs):
     import hashlib
     import numpy as np
@@ -313,11 +355,20 @@ def bake_pass(objs, mats, img, kind):
 
 
 game_mats = {}
+uv_src = load_uv_source(UV_FROM) if UV_FROM else None
 for s, objs in set_objs.items():
     if not objs:
         continue
-    unwrap(objs)
-    log("unwrapped", s, "uv", uv_hash(objs))
+    mismatch = copy_uvs(objs, uv_src) if uv_src is not None else "no source"
+    if mismatch is None:
+        log("copied UVs", s, "from", os.path.basename(UV_FROM), "uv", uv_hash(objs))
+    else:
+        if uv_src is not None:
+            log("UVs for", s, "not copied (%s differs): unwrapping, its maps will be re-baked" % mismatch)
+        unwrap(objs)
+        log("unwrapped", s, "uv", uv_hash(objs))
+    # maps can only be reused if the UVs are the ones they were baked on
+    reuse = RESUME and (mismatch is None or uv_src is None)
     if UV_ONLY:
         continue
     mats = sorted({sl.material for o in objs for sl in o.material_slots if sl.material and is_procedural(sl.material)},
@@ -326,7 +377,7 @@ for s, objs in set_objs.items():
     for kind, cs in (("color", 'sRGB'), ("rough", 'Non-Color'), ("metal", 'Non-Color'), ("normal", 'Non-Color')):
         nm = "T_%s_%s" % (s, {"color": "BaseColor", "rough": "Roughness", "metal": "Metallic", "normal": "Normal"}[kind])
         path = os.path.join(TEX, nm + ".png")
-        if RESUME and os.path.exists(path):
+        if reuse and os.path.exists(path):
             img = bpy.data.images.load(path)
             if tuple(img.size) == (RES, RES):
                 img.name = nm

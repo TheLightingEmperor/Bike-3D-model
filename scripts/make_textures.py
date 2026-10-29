@@ -1,6 +1,6 @@
 """
 Generates the printed artwork used by the bike: gauge dial faces (speedometer, tachometer, LCD)
-and the tank emblem mask. Pure Python + Pillow, no Blender needed.
+and the tank emblem mask (custom K badge). Pure Python + Pillow, no Blender needed.
 
     python3 scripts/make_textures.py            # writes bike/textures/*.png
 """
@@ -140,30 +140,51 @@ def tacho():
 
 
 def emblem():
-    """Tank badge mask: ring + crown + three jewels + base band (white on black)."""
-    S = N * SS
-    img = Image.new("L", (S, S), 0)
-    d = ImageDraw.Draw(img)
-    ext = 0.08          # design units across the image
+    """Tank badge mask: a stencil-cut italic "K" breaking out of a hex-nut keyline.
+    Two-ink mask: red = letter fill, green = keyline (outline around the letter + the hex)."""
+    S = 2048 * SS
+    ext = 2.2                                       # design units across the image (badge spans about +-0.85)
 
-    def P(x, y):
-        return ((x / ext + 0.5) * S, (0.5 - (y - 0.012) / ext) * S)
-    r = 0.034
-    w = int(0.0047 / ext * S)
-    cx, cy = P(0, 0.012)
-    rr = r / ext * S
-    d.ellipse([cx - rr - w / 2, cy - rr - w / 2, cx + rr + w / 2, cy + rr + w / 2], outline=255, width=w)
-    crown = [(-0.02, -0.004), (-0.023, 0.024), (-0.01, 0.009), (0.0, 0.031), (0.01, 0.009), (0.023, 0.024), (0.02, -0.004)]
-    pts = [P(*p) for p in crown]
-    d.line(pts + [pts[0]], fill=255, width=int(0.0042 / ext * S), joint="curve")
-    d.line([P(-0.021, -0.011), P(0.021, -0.011)], fill=255, width=int(0.0042 / ext * S))
-    for jx, jy in ((-0.023, 0.028), (0.0, 0.035), (0.023, 0.028)):
-        x, y = P(jx, jy)
-        jr = 0.0032 / ext * S
-        d.ellipse([x - jr, y - jr, x + jr, y + jr], fill=255)
-    img = img.filter(ImageFilter.GaussianBlur(SS * 0.6))
-    img.resize((N, N), Image.LANCZOS).save(os.path.join(OUT, "emblem_crown_mask.png"))
-    print("wrote emblem_crown_mask.png")
+    def P(x, y, shear=0.2, dx=-0.08):               # italic shear, then centre the slanted letter
+        x = x + shear * y + dx
+        return ((x / ext + 0.5) * S, (0.5 - y / ext) * S)
+
+    def U(v):                                       # design length -> pixels
+        return max(1, int(round(v / ext * S)))
+    stem = [(-0.48, -0.64), (-0.22, -0.64), (-0.22, 0.64), (-0.36, 0.64), (-0.48, 0.52)]       # chisel-cut top
+    chevron = [(-0.15, 0.09), (0.30, 0.64), (0.62, 0.64), (0.03, 0.0), (0.64, -0.64), (0.32, -0.64), (-0.15, -0.09)]
+    pieces = [[P(*q) for q in pc] for pc in (stem, chevron)]
+
+    def layer(grow):
+        im = Image.new("L", (S, S), 0)
+        d = ImageDraw.Draw(im)
+        for pts in pieces:
+            d.polygon(pts, fill=255)
+            if grow:
+                d.line(pts + [pts[0]], fill=255, width=2 * U(grow), joint="curve")
+                for q in pts:                          # round the outer corners of the grown outline
+                    r = U(grow)
+                    d.ellipse([q[0] - r, q[1] - r, q[0] + r, q[1] + r], fill=255)
+        return im
+    keyline, gap = 0.04, 0.05
+    fill = layer(0)
+    ring = layer(keyline)
+    clear = layer(keyline + gap)
+    from PIL import ImageChops
+
+    def hexagon(R):
+        im = Image.new("L", (S, S), 0)
+        ImageDraw.Draw(im).polygon([P(R * math.cos(math.radians(a)), R * math.sin(math.radians(a)), 0.0, 0.0)
+                                    for a in range(0, 360, 60)], fill=255)
+        return im
+    # hex-nut keyline (mitred corners); the K breaks out of it at the top-right arm and the bottom-left foot
+    R, w = 0.92, 0.075
+    hexl = ImageChops.subtract(hexagon(R + w / 2), hexagon(R - w / 2))
+    green = ImageChops.lighter(ImageChops.subtract(ring, fill), ImageChops.subtract(hexl, clear))
+    img = Image.merge("RGB", (fill, green, Image.new("L", (S, S), 0)))
+    img = img.filter(ImageFilter.GaussianBlur(SS * 0.7)).resize((1024, 1024), Image.LANCZOS)
+    img.save(os.path.join(OUT, "emblem_k_mask.png"))
+    print("wrote emblem_k_mask.png")
 
 
 if __name__ == "__main__":
