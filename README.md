@@ -32,6 +32,7 @@ at a real component. An automated checker proves it (see [Mechanics](#mechanics)
 | `exports/wasteland_scrambler.fbx` | Same asset for Unreal / Unity (textures embedded). |
 | `exports/wasteland_scrambler.usdz` | Self-contained USDZ — opens directly in macOS Quick Look / iOS AR. |
 | `exports/wasteland_scrambler.usdc` | USD for VFX pipelines (Houdini, Katana, Omniverse…), textures in `exports/textures/`. |
+| `exports/wasteland_scrambler_obj.zip` | OBJ + MTL (PBR extensions) + textures, for any 3D package. OBJ has no hierarchy or pivots: parts are placed in world space. |
 | `exports/wasteland_scrambler_game.blend` | The baked / modifier-applied game version (texture maps packed in — works on its own). |
 | `exports/textures/` | 2048² PNG texture sets: `T_{Paint,Metal,Rubber}_{BaseColor,Roughness,Metallic,Normal}`. |
 | `scripts/build_bike.py` | Builds the whole bike from scratch (sectioned per sub-assembly). |
@@ -171,7 +172,7 @@ After editing the game version (LODs, texture paint-overs…), write the files a
 
 ```bash
 blender -b exports/wasteland_scrambler_game.blend --python scripts/export_game_assets.py -- \
-        --outdir exports --reexport            # optionally --formats glb,fbx,usd,usdz,blend
+        --outdir exports --reexport            # optionally --formats glb,fbx,usd,usdz,obj,blend
 ```
 
 **Engine import notes**

@@ -22,7 +22,7 @@ What it does (the source .blend is never modified):
   --uv-from   a previous "_game.blend": copy its UVs (per mesh, when the geometry matches) instead of
               unwrapping, so UVs stay stable between versions and --resume can reuse that set's maps
   --reexport  run on a "_game.blend": skip flatten/bake, just write the files again
-  --formats   comma list of glb,fbx,usd,usdz,blend to write (default: all)
+  --formats   comma list of glb,fbx,usd,usdz,obj,blend to write (default: all)
 """
 import bpy
 import bmesh
@@ -46,7 +46,7 @@ RESUME = "--resume" in argv
 UV_ONLY = "--uv-only" in argv
 UV_FROM = arg("--uv-from", None)
 REEXPORT = "--reexport" in argv
-FORMATS = set(arg("--formats", "glb,fbx,usd,usdz,blend").split(","))
+FORMATS = set(arg("--formats", "glb,fbx,usd,usdz,obj,blend").split(","))
 TEX = os.path.join(OUT, "textures")
 os.makedirs(TEX, exist_ok=True)
 
@@ -114,6 +114,36 @@ def finish():
             log("USDZ", usdz, os.path.getsize(usdz) // 1024, "KB")
     except Exception as e:
         log("USD export skipped:", e)
+    if "obj" in FORMATS:
+        # OBJ + MTL (PBR extensions) zipped with the textures it references; OBJ keeps no hierarchy or pivots
+        import re
+        import zipfile
+        obj = os.path.join(OUT, NAME + ".obj")
+        mtl = os.path.join(OUT, NAME + ".mtl")
+        bpy.ops.wm.obj_export(filepath=obj, export_selected_objects=True, apply_modifiers=True, export_uv=True,
+                              export_normals=True, export_materials=True, export_pbr_extensions=True,
+                              path_mode='RELATIVE', forward_axis='NEGATIVE_Z', up_axis='Y')
+        # point every map at textures/<file> (packed images export with unusable relative paths)
+        lines, maps = [], set()
+        for ln in open(mtl).read().splitlines():
+            if re.match(r"\s*(map_\w+|bump|norm|disp)\s", ln):
+                *opts, path = ln.split()
+                name = os.path.basename(path.replace("\\", "/"))
+                if os.path.isfile(os.path.join(TEX, name)):
+                    maps.add("textures/" + name)
+                    ln = " ".join(opts + ["textures/" + name])
+            lines.append(ln)
+        open(mtl, "w").write("\n".join(lines) + "\n")
+        maps = sorted(maps)
+        zpath = os.path.join(OUT, NAME + "_obj.zip")
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+            z.write(obj, os.path.basename(obj))
+            z.write(mtl, os.path.basename(mtl))
+            for t in maps:
+                z.write(os.path.join(OUT, t), t)
+        os.remove(obj)
+        os.remove(mtl)
+        log("OBJ", zpath, os.path.getsize(zpath) // 1024, "KB,", len(maps), "maps")
     if "blend" in FORMATS:
         # pack the maps so the file works on its own, with paths relative to it for unpacking
         for img in bpy.data.images:
